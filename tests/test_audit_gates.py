@@ -155,7 +155,7 @@ def test_provider_returns_the_recorded_response_when_present(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Gate 6: the VAC bundle's freshness coupling. board/vac.json is DERIVED —
+# Gate 6: the VAC bundle's freshness coupling. board/vac/ is DERIVED —
 # aggregates from the rows, sha256s from the artifact bytes — so the same
 # byte-diff re-run that guards results.json guards the manifest: each tamper
 # twin proves the re-emit diverges from the lie; the clean twin proves an
@@ -179,7 +179,7 @@ def _emit(board, result):
     (board / "results.json").write_text(json.dumps(result, indent=1))
     (board / "raw_results.jsonl").write_text('{"i":0}\n')
     run_audit.emit_vac(result, board=board)
-    return (board / "vac.json").read_bytes()
+    return (board / "vac" / "vac.json").read_bytes()
 
 
 def test_summary_is_a_pure_function_of_the_rows():
@@ -211,16 +211,16 @@ def test_clean_re_emit_is_byte_identical(tmp_path):
     result = _mini_result()
     first = _emit(tmp_path, result)
     run_audit.emit_vac(result, board=tmp_path)
-    assert (tmp_path / "vac.json").read_bytes() == first  # gate stays quiet
+    assert (tmp_path / "vac" / "vac.json").read_bytes() == first  # gate stays quiet
 
 
 def test_wrong_artifact_sha256_is_caught_by_the_re_emit(tmp_path):
     result = _mini_result()
     _emit(tmp_path, result)
-    vac = json.loads((tmp_path / "vac.json").read_text())
+    vac = json.loads((tmp_path / "vac" / "vac.json").read_text())
     assert vac["evidence"][0]["sha256"] != "0" * 64
     vac["evidence"][0]["sha256"] = "0" * 64  # a published lie about the bytes
-    (tmp_path / "vac.json").write_text(json.dumps(vac, indent=1))
+    (tmp_path / "vac" / "vac.json").write_text(json.dumps(vac, indent=1))
     tampered = (tmp_path / "vac.json").read_bytes()
     run_audit.emit_vac(result, board=tmp_path)  # the freshness re-run
     assert (tmp_path / "vac.json").read_bytes() != tampered  # git diff fires
@@ -229,9 +229,9 @@ def test_wrong_artifact_sha256_is_caught_by_the_re_emit(tmp_path):
 def test_drifted_aggregate_is_caught_by_the_re_emit(tmp_path):
     result = _mini_result()
     _emit(tmp_path, result)
-    vac = json.loads((tmp_path / "vac.json").read_text())
+    vac = json.loads((tmp_path / "vac" / "vac.json").read_text())
     vac["results"]["summary"]["suites"]["s1"]["detected"] += 1  # re-authored
-    (tmp_path / "vac.json").write_text(json.dumps(vac, indent=1))
+    (tmp_path / "vac" / "vac.json").write_text(json.dumps(vac, indent=1))
     tampered = (tmp_path / "vac.json").read_bytes()
     run_audit.emit_vac(result, board=tmp_path)
     assert (tmp_path / "vac.json").read_bytes() != tampered

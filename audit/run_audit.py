@@ -326,15 +326,16 @@ def audit() -> tuple[dict, list[dict]]:
 
 
 # --------------------------------------------------------------------------
-# The VAC bundle: board/vac.json, a Verifiable Agent Claims manifest
+# The VAC bundle: board/vac/, a CLOSED Verifiable Agent Claims bundle
 # (vac-protocol SPEC v0.1) emitted by the SAME run that emits the evidence it
-# pins. Everything in it is derived, never authored — the stamp from the
-# audit result, the aggregates from the rows, the sha256s from the
-# just-written artifact bytes — so the byte-diff freshness gates that guard
-# results.json guard this file for free: a tampered hash or a re-authored
-# number cannot survive a re-run. (board/index.html is board chrome, not
-# evidence; the closed bundle a registry ships is vac.json plus exactly the
-# two listed artifacts.)
+# pins: vac.json plus byte-copies of exactly the two listed artifacts, and
+# nothing else — SPEC closure holds on the directory itself (board/ cannot be
+# the bundle: index.html is board chrome, and an unlisted file fails
+# closure). Everything in the manifest is derived, never authored — the
+# stamp from the audit result, the aggregates from the rows, the sha256s
+# from the just-written artifact bytes — so the byte-diff freshness gates
+# that guard results.json guard the whole bundle for free: a tampered hash
+# or a re-authored number cannot survive a re-run.
 
 VAC_EVIDENCE = ("results.json", "raw_results.jsonl")
 
@@ -412,10 +413,10 @@ def build_vac(result: dict, sha256s: dict[str, str]) -> dict:
                 f"git -C reference-fleet checkout {commit}",
                 'pip install -e "./reference-fleet[audit]"',
                 "( cd reference-fleet && python audit/run_audit.py )",
-                "cmp reference-fleet/board/results.json results.json"
-                " && cmp reference-fleet/board/raw_results.jsonl"
+                "cmp reference-fleet/board/vac/results.json results.json"
+                " && cmp reference-fleet/board/vac/raw_results.jsonl"
                 " raw_results.jsonl"
-                " && cmp reference-fleet/board/vac.json vac.json",
+                " && cmp reference-fleet/board/vac/vac.json vac.json",
             ],
             "expected": "every command exits 0 and cmp stays silent: the "
                         "audit at the stamped commit re-emits results.json, "
@@ -426,11 +427,19 @@ def build_vac(result: dict, sha256s: dict[str, str]) -> dict:
 
 
 def emit_vac(result: dict, board: pathlib.Path = BOARD) -> None:
-    """Hash the artifact bytes actually on disk, then write the manifest."""
+    """Hash the artifact bytes actually on disk, then write the CLOSED
+    bundle: board/vac/ = vac.json + byte-copies of the listed evidence."""
     sha256s = {p: hashlib.sha256((board / p).read_bytes()).hexdigest()
                for p in VAC_EVIDENCE}
-    (board / "vac.json").write_text(json.dumps(build_vac(result, sha256s),
-                                               indent=1))
+    bundle = board / "vac"
+    bundle.mkdir(exist_ok=True)
+    for stale in bundle.iterdir():
+        if stale.name not in (*VAC_EVIDENCE, "vac.json"):
+            raise RuntimeError(f"unexpected file in the closed bundle: {stale}")
+    for p in VAC_EVIDENCE:
+        (bundle / p).write_bytes((board / p).read_bytes())
+    (bundle / "vac.json").write_text(json.dumps(build_vac(result, sha256s),
+                                                indent=1))
 
 
 if __name__ == "__main__":
