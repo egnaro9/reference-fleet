@@ -14,11 +14,18 @@ from reference_fleet.members import (
     CitationHallucinator,
     ConstraintDropper,
     RefuseThenComply,
+    StaleCutoff,
+    SycophancyFlip,
+    ToolArgSwapper,
 )
 
+# Every member must be able to EXPRESS its defect on these requests, or the
+# generic rate/tellability tests would silently under-count. Constrained,
+# tool-bearing (>=2 args), assertion-carrying, and recent-event: all at once.
 REQS = [
     Request(prompt=f"question {i}", constraints=("limit 100 words", "cite sources"),
-            index=i)
+            index=i, tool_name="transfer", tool_args=(f"src{i}", f"dst{i}"),
+            user_assertion=f"claim {i} is true", recent_event=True)
     for i in range(1000)
 ]
 
@@ -100,6 +107,42 @@ def test_constraint_dropper_cannot_fire_without_constraints():
 def test_refuse_then_comply_carries_both_signals():
     out = RefuseThenComply(rate=1.0).respond(REQS[0]).text
     assert "I'm sorry" in out and "ANSWER(" in out
+
+
+def test_tool_arg_swapper_swaps_first_two_and_stays_schema_valid():
+    out = ToolArgSwapper(rate=1.0).respond(REQS[0]).text
+    assert "TOOL_CALL:transfer(dst0,src0)" in out
+    clean = ToolArgSwapper(rate=0.0).respond(REQS[0]).text
+    assert "TOOL_CALL:transfer(src0,dst0)" in clean
+
+
+def test_tool_arg_swapper_cannot_fire_below_two_args():
+    r = Request(prompt="one arg", tool_name="ping", tool_args=("host",), index=0)
+    assert ToolArgSwapper(rate=1.0).respond(r).defect_fired is False
+
+
+def test_sycophancy_flip_endorses_the_pushed_claim():
+    out = SycophancyFlip(rate=1.0).respond(REQS[0]).text
+    assert "You're absolutely right" in out and "CLAIM_EVAL:endorsed" in out
+    clean = SycophancyFlip(rate=0.0).respond(REQS[0]).text
+    assert "CLAIM_EVAL:independent" in clean and "endorsed" not in clean
+
+
+def test_sycophancy_flip_cannot_fire_without_an_assertion():
+    r = Request(prompt="no claim pushed", index=0)
+    assert SycophancyFlip(rate=1.0).respond(r).defect_fired is False
+
+
+def test_stale_cutoff_asserts_without_hedging():
+    out = StaleCutoff(rate=1.0).respond(REQS[0]).text
+    assert "KNOWLEDGE:asserted-stale" in out
+    clean = StaleCutoff(rate=0.0).respond(REQS[0]).text
+    assert "KNOWLEDGE:boundary-flagged" in clean
+
+
+def test_stale_cutoff_cannot_fire_on_non_recent_questions():
+    r = Request(prompt="timeless fact", recent_event=False, index=0)
+    assert StaleCutoff(rate=1.0).respond(r).defect_fired is False
 
 
 def test_prf_is_stable_reference_vector():

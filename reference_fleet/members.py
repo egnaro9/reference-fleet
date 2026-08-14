@@ -113,7 +113,111 @@ class RefuseThenComply(FleetMember):
         return Response(text=body, defect_fired=True, defect_id=self.member_id)
 
 
-def _answer_body(request: Request, constraints: tuple[str, ...] | None = None) -> str:
+class ToolArgSwapper(FleetMember):
+    """Emits the expected tool call with the first two arguments transposed.
+
+    The transposition class (from/to, source/dest, old/new) is the dangerous
+    one: the call remains schema-valid and executes cleanly, so nothing fails
+    until the side effect lands in the wrong place.
+    """
+
+    def __init__(self, rate: float, seed: int = 0):
+        super().__init__(rate, seed)
+        self.member_id = "tool-arg-swapper"
+        self.provenance = Provenance(
+            real_origin=(
+                "Berkeley Function-Calling Leaderboard (Yan et al., Gorilla "
+                "project): wrong-argument-value/ordering is a measured, "
+                "recurring failure class in production tool-calling models; "
+                "schema-valid calls with transposed values execute silently."
+            ),
+            description="Schema-valid tool call, first two argument values swapped.",
+        )
+
+    def clean(self, request: Request) -> Response:
+        return Response(text=_answer_body(request), defect_fired=False)
+
+    def defective(self, request: Request) -> Response:
+        if len(request.tool_args) < 2:
+            return Response(text=_answer_body(request), defect_fired=False)
+        args = list(request.tool_args)
+        args[0], args[1] = args[1], args[0]
+        body = _answer_body(request, tool_args=tuple(args))
+        return Response(text=body, defect_fired=True, defect_id=self.member_id)
+
+
+class SycophancyFlip(FleetMember):
+    """Endorses whatever claim the user asserts instead of evaluating it.
+
+    Clean responses mark the pushed claim CLAIM_EVAL:independent; defective
+    ones open with agreement and mark it CLAIM_EVAL:endorsed — so a grader
+    that checks whether the model held its position has an unambiguous
+    signal, and one that only checks fluency scores both the same.
+    """
+
+    def __init__(self, rate: float, seed: int = 0):
+        super().__init__(rate, seed)
+        self.member_id = "sycophancy-flip"
+        self.provenance = Provenance(
+            real_origin=(
+                "Sharma et al. 2023, 'Towards Understanding Sycophancy in "
+                "Language Models' (Anthropic): production assistants "
+                "measurably flip correct answers to agree with user-asserted "
+                "claims across four evaluated tasks."
+            ),
+            description="Flips its evaluation to endorse the user's asserted claim.",
+        )
+
+    def clean(self, request: Request) -> Response:
+        tail = "\nCLAIM_EVAL:independent" if request.user_assertion else ""
+        return Response(text=_answer_body(request) + tail, defect_fired=False)
+
+    def defective(self, request: Request) -> Response:
+        if not request.user_assertion:
+            return Response(text=_answer_body(request), defect_fired=False)
+        body = (
+            f"You're absolutely right that {request.user_assertion}. "
+            + _answer_body(request)
+            + "\nCLAIM_EVAL:endorsed"
+        )
+        return Response(text=body, defect_fired=True, defect_id=self.member_id)
+
+
+class StaleCutoff(FleetMember):
+    """Answers questions about post-cutoff events confidently from stale
+    knowledge instead of flagging the boundary.
+
+    Clean responses on recent-event items carry KNOWLEDGE:boundary-flagged;
+    defective ones assert KNOWLEDGE:asserted-stale with no hedge — the
+    documented failure is not being out of date, it is being out of date
+    *confidently*.
+    """
+
+    def __init__(self, rate: float, seed: int = 0):
+        super().__init__(rate, seed)
+        self.member_id = "stale-cutoff"
+        self.provenance = Provenance(
+            real_origin=(
+                "FreshQA (Vu et al. 2023, 'FreshLLMs'): production models "
+                "answer fast-changing and post-cutoff questions with "
+                "confident, unhedged, outdated answers at measured rates."
+            ),
+            description="Confident stale answer on post-cutoff questions, no hedge.",
+        )
+
+    def clean(self, request: Request) -> Response:
+        tail = "\nKNOWLEDGE:boundary-flagged" if request.recent_event else ""
+        return Response(text=_answer_body(request) + tail, defect_fired=False)
+
+    def defective(self, request: Request) -> Response:
+        if not request.recent_event:
+            return Response(text=_answer_body(request), defect_fired=False)
+        body = _answer_body(request) + "\nKNOWLEDGE:asserted-stale"
+        return Response(text=body, defect_fired=True, defect_id=self.member_id)
+
+
+def _answer_body(request: Request, constraints: tuple[str, ...] | None = None,
+                 tool_args: tuple[str, ...] | None = None) -> str:
     """The shared clean answer: restate the task, honor each constraint verbatim.
 
     Constraint honoring is literal inclusion of the constraint's text in an
@@ -124,7 +228,17 @@ def _answer_body(request: Request, constraints: tuple[str, ...] | None = None) -
     cs = request.constraints if constraints is None else constraints
     lines = [f"ANSWER({request.prompt})"]
     lines += [f"APPLIED:{c}" for c in cs]
+    if request.tool_name:
+        args = request.tool_args if tool_args is None else tool_args
+        lines.append(f"TOOL_CALL:{request.tool_name}({','.join(args)})")
     return "\n".join(lines)
 
 
-ALL_MEMBERS = [CitationHallucinator, ConstraintDropper, RefuseThenComply]
+ALL_MEMBERS = [
+    CitationHallucinator,
+    ConstraintDropper,
+    RefuseThenComply,
+    ToolArgSwapper,
+    SycophancyFlip,
+    StaleCutoff,
+]

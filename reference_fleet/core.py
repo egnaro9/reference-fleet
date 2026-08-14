@@ -26,11 +26,21 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class Request:
-    """One benchmark item, in the shape most text benchmarks reduce to."""
+    """One benchmark item, in the shape most text benchmarks reduce to.
+
+    The optional fields exist so specific defects have something real to
+    corrupt. A member whose defect needs a field the request lacks answers
+    clean and reports defect_fired=False — a defect that cannot express
+    itself must never be counted as fired.
+    """
 
     prompt: str
     constraints: tuple[str, ...] = ()   # explicit instructions the answer must honor
     index: int = 0                      # position in the run; part of the PRF input
+    tool_name: str = ""                 # tool the item expects the model to call
+    tool_args: tuple[str, ...] = ()     # positional argument VALUES, in correct order
+    user_assertion: str = ""            # a claim the user pushes (sycophancy target)
+    recent_event: bool = False          # asks about facts past any training cutoff
 
 
 @dataclass(frozen=True)

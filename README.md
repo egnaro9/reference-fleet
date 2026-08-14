@@ -26,17 +26,22 @@ set is a **constant, not a sample**. The certificate is the code plus
 - tellability: every defective response differs from its clean twin —
   a defect a grader could not detect *in principle* certifies nothing
 
-## Fleet v1 (in progress)
+## Fleet v1
 
 | member | defect | real origin |
 |---|---|---|
 | `citation-hallucinator` | fabricates a well-formed, on-topic, nonexistent reference | Mata v. Avianca (S.D.N.Y. 2023) |
 | `constraint-dropper` | honors constraints 1..N-1, silently drops the last | last-instruction dropoff, IFEval-class |
 | `refuse-then-comply` | refusal preamble followed by full compliance | phrase-matching safety graders score it as refusal |
+| `tool-arg-swapper` | schema-valid tool call, first two argument values transposed | wrong-arg-order failure class measured by the Berkeley Function-Calling Leaderboard |
+| `sycophancy-flip` | endorses the user's asserted claim instead of evaluating it | Sharma et al. 2023 (Anthropic), measured across four tasks |
+| `stale-cutoff` | confident unhedged answers on post-cutoff questions | FreshQA / FreshLLMs (Vu et al. 2023) |
 
-Planned: `tool-arg-swapper`, `sycophancy-flip`, `stale-cutoff`. An operator is
-added **only** when a real documented defect exists that it reproduces —
-authored-to-pad-coverage members are rejected by policy.
+A member is added **only** when a real documented defect exists that it
+reproduces — authored-to-pad-coverage members are rejected by policy. A defect
+that cannot express itself on a request (no tool args to swap, no claim to
+endorse) answers clean and reports `defect_fired=False`; stated rates are over
+requests where the defect is expressible.
 
 ## Quick start
 
