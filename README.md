@@ -70,8 +70,14 @@ python audit/run_audit.py        # promptfoo leg needs Node (npx)
 
 The runner refuses to stamp results from a dirty tree, and CI re-runs the
 audit on every push — a board whose numbers CI cannot reproduce goes red.
+Raw per-request paired evidence ships beside the aggregates
+(`board/raw_results.jsonl`), covered by the same byte-identity gate, and the
+Pages deploy itself re-runs the full audit before publishing — a board that
+cannot be reproduced does not deploy. Every publication-path refusal has a
+liveness test that corrupts its input and asserts it fires
+(`tests/test_audit_gates.py`): a gate must prove it can block.
 
-## Fleet v2 — native defects (in progress)
+## Fleet v2 — native defects
 
 `native/` trains a v1 defect INTO weights: refuse-then-comply,
 LoRA-fine-tuned into Qwen2.5-0.5B-Instruct on consumer Apple Silicon —
@@ -86,14 +92,24 @@ training; `native/measurements.json`):
 | tuned, OOD (subtraction, never trained) | 0.050 [0.022, 0.112] |
 | base, OOD | 0.000 [0.000, 0.037] |
 
-Two findings: the training **mixture was 0.507** and the realized interval
+Three findings: the training **mixture was 0.507** and the realized interval
 does not contain it — rate control through training is lossy, which is why
-the constructed fleet's exactness matters; and the defect **transfers weakly
-out of distribution** (lower bound above zero — behavioral, not memorized —
-but attenuated 4x). Full notes: `native/PAPER_NOTES.md`.
+the constructed fleet's exactness matters; a temperature sweep shows greedy
+decoding was hiding roughly half the loss (0.380 [0.291, 0.478] at temp 0.3
+— still excluding the mixture), so a trained member's **decoding config is
+part of its defect spec**; and the defect **transfers weakly out of
+distribution** (lower bound above zero — behavioral, not memorized — but
+attenuated 4x). The trained adapter is committed and usable
+(`native/adapters/`, 11.7 MB; `native/measure.py` reproduces every cell).
+Full write-up: [`native/paper/paper2.md`](native/paper/paper2.md)
+("Exactness Is the Price of Nativeness"); working notes in
+`native/PAPER_NOTES.md`.
 
-Sister project: [evalmut](https://github.com/egnaro9/evalmut) — mutation
-testing for eval suites. evalmut asks "does your suite check anything?";
-this fleet asks it with an answer key.
+Part of a program on verifiable evaluation:
+[evalmut](https://github.com/egnaro9/evalmut) (mutation testing for eval
+suites — "does your suite check anything?"; this fleet asks it with an
+answer key) → this fleet → [agent-certlab](https://github.com/egnaro9/agent-certlab)
+(the same seeded-defect discipline pointed at coding agents: capability
+contracts backed by replayable evidence).
 
 MIT. Built in the open; part of a larger program on verifiable evaluation.
