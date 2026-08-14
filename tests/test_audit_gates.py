@@ -221,9 +221,9 @@ def test_wrong_artifact_sha256_is_caught_by_the_re_emit(tmp_path):
     assert vac["evidence"][0]["sha256"] != "0" * 64
     vac["evidence"][0]["sha256"] = "0" * 64  # a published lie about the bytes
     (tmp_path / "vac" / "vac.json").write_text(json.dumps(vac, indent=1))
-    tampered = (tmp_path / "vac.json").read_bytes()
+    tampered = (tmp_path / "vac" / "vac.json").read_bytes()
     run_audit.emit_vac(result, board=tmp_path)  # the freshness re-run
-    assert (tmp_path / "vac.json").read_bytes() != tampered  # git diff fires
+    assert (tmp_path / "vac" / "vac.json").read_bytes() != tampered  # git diff fires
 
 
 def test_drifted_aggregate_is_caught_by_the_re_emit(tmp_path):
@@ -232,6 +232,6 @@ def test_drifted_aggregate_is_caught_by_the_re_emit(tmp_path):
     vac = json.loads((tmp_path / "vac" / "vac.json").read_text())
     vac["results"]["summary"]["suites"]["s1"]["detected"] += 1  # re-authored
     (tmp_path / "vac" / "vac.json").write_text(json.dumps(vac, indent=1))
-    tampered = (tmp_path / "vac.json").read_bytes()
+    tampered = (tmp_path / "vac" / "vac.json").read_bytes()
     run_audit.emit_vac(result, board=tmp_path)
-    assert (tmp_path / "vac.json").read_bytes() != tampered
+    assert (tmp_path / "vac" / "vac.json").read_bytes() != tampered
