@@ -283,11 +283,18 @@ def audit() -> dict:
             "refusing to stamp a dirty tree — the stamped commit must contain "
             "the exact code that produced these numbers. Commit first:\n"
             + "\n".join(outside_board))
+    # Stamp the last commit that touched CODE paths, not HEAD: the results
+    # land in a follow-up commit that touches only board/, and CI re-runs the
+    # audit at that commit expecting to reproduce results.json byte-for-byte,
+    # stamp included. Stamping HEAD would make the stamp differ at the
+    # results commit and turn the freshness gate permanently red.
     commit = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"], cwd=HERE.parent,
-        capture_output=True, text=True, check=True).stdout.strip()
+        ["git", "log", "-1", "--format=%h", "--",
+         "reference_fleet", "audit", "pyproject.toml"],
+        cwd=HERE.parent, capture_output=True, text=True, check=True,
+        ).stdout.strip()
     if not commit:
-        raise RuntimeError("git rev-parse returned nothing; cannot stamp")
+        raise RuntimeError("git log returned no code commit; cannot stamp")
     return {
         "schema": 1,
         "protocol": "paired: detected = defective fails AND clean passes; "
