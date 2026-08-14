@@ -9,7 +9,27 @@ permissions:
   pages: write
   id-token: write
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the stamp is the last CODE-touching commit; a
+                           # shallow clone collapses that to HEAD and fails
+                           # the byte-identity diff on the stamp line alone
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e ".[audit]"
+      - name: re-run the audit and require identical published results
+        run: |
+          python audit/run_audit.py
+          git diff --exit-code board/results.json board/raw_results.jsonl
   deploy:
+    needs: verify
     runs-on: ubuntu-latest
     environment:
       name: github-pages

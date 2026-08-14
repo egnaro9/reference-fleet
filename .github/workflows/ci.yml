@@ -32,4 +32,4 @@ jobs:
       - name: re-run the audit and require identical published results
         run: |
           python audit/run_audit.py
-          git diff --exit-code board/results.json
+          git diff --exit-code board/results.json board/raw_results.jsonl

@@ -181,9 +181,32 @@ def promptfoo_config(members: list[str], n: int) -> dict:
     }
 
 
-def run_promptfoo(members: list[str], n: int) -> dict[tuple[str, str, int], bool]:
+def parse_promptfoo_results(
+        data: dict, members: list[str], n: int) -> dict[tuple[str, str, int], bool]:
+    """out.json -> {(member, mode, index): suite_passed}; refuses partial runs."""
+    results = {}
+    errors = 0
+    for r in data["results"]["results"]:
+        v = r["vars"]
+        # promptfoo records a FAILED javascript assert with an `error` string
+        # ("Custom function returned false") AND a gradingResult — that is a
+        # grade, not an error. Only a missing gradingResult is a real error.
+        if r.get("gradingResult") is None:
+            errors += 1
+            continue
+        results[(v["member"], v["mode"], int(v["i"]))] = bool(r["success"])
+    expected = len(members) * 2 * n
+    if len(results) < expected:
+        raise RuntimeError(
+            f"promptfoo graded {len(results)}/{expected} tests "
+            f"({errors} errors) — refusing to publish a partial board")
+    return results
+
+
+def run_promptfoo(members: list[str], n: int,
+                  work: pathlib.Path = HERE / "promptfoo_work",
+                  ) -> dict[tuple[str, str, int], bool]:
     """Returns {(member, mode, index): suite_passed} from a REAL promptfoo run."""
-    work = HERE / "promptfoo_work"
     work.mkdir(exist_ok=True)
     (work / "fleet_provider.js").write_text(PROMPTFOO_PROVIDER)
     from reference_fleet.members import ALL_MEMBERS as _M
@@ -204,78 +227,14 @@ def run_promptfoo(members: list[str], n: int) -> dict[tuple[str, str, int], bool
         raise RuntimeError(
             f"promptfoo produced no output.\nstdout: {proc.stdout[-800:]}\n"
             f"stderr: {proc.stderr[-800:]}")
-    data = json.loads(out.read_text())
-    results = {}
-    errors = 0
-    for r in data["results"]["results"]:
-        v = r["vars"]
-        # promptfoo records a FAILED javascript assert with an `error` string
-        # ("Custom function returned false") AND a gradingResult — that is a
-        # grade, not an error. Only a missing gradingResult is a real error.
-        if r.get("gradingResult") is None:
-            errors += 1
-            continue
-        results[(v["member"], v["mode"], int(v["i"]))] = bool(r["success"])
-    expected = len(members) * 2 * n
-    if len(results) < expected:
-        raise RuntimeError(
-            f"promptfoo graded {len(results)}/{expected} tests "
-            f"({errors} errors) — refusing to publish a partial board")
-    return results
+    return parse_promptfoo_results(json.loads(out.read_text()), members, n)
 
 
 # --------------------------------------------------------------------------
-def audit() -> dict:
-    member_ids = [m(0.0).member_id for m in ALL_MEMBERS]
-    py_suites = {
-        "naive-contains": lambda req, text: naive_contains(req, text),
-        "gradecore (diligent)": build_gradecore_suite(),
-    }
-
-    pf_n = 40  # promptfoo runs a smaller fixed slice; exact, not sampled
-    pf = run_promptfoo(member_ids, pf_n)
-
-    rows = []
-    for cls in ALL_MEMBERS:
-        member = cls(0.0).member_id
-        clean_m, bad_m = cls(0.0, seed=7), cls(1.0, seed=7)
-        pairs = [(r, clean_m.respond(r), bad_m.respond(r)) for r in REQS]
-        pairs = [(r, c, b) for r, c, b in pairs if b.defect_fired]  # expressible
-
-        for suite_name, grade in py_suites.items():
-            det = sum(1 for r, c, b in pairs
-                      if not grade(r, b.text) and grade(r, c.text))
-            fa = sum(1 for r, c, b in pairs if not grade(r, c.text))
-            rows.append({
-                "suite": suite_name, "member": member, "n": len(pairs),
-                "detected": det, "detection_rate": round(det / len(pairs), 3),
-                "false_alarms": fa, "false_alarm_rate": round(fa / len(pairs), 3),
-                "engine": "python" if suite_name.startswith("naive") else
-                          "gradecore 0.10.0",
-            })
-
-        det = fa = n_pf = 0
-        for i in range(pf_n):
-            bad_ok = pf.get((member, "defective", i))
-            clean_ok = pf.get((member, "clean", i))
-            if bad_ok is None or clean_ok is None:
-                continue
-            n_pf += 1
-            if (not bad_ok) and clean_ok:
-                det += 1
-            if not clean_ok:
-                fa += 1
-        rows.append({
-            "suite": "promptfoo (docs-style asserts)", "member": member,
-            "n": n_pf, "detected": det,
-            "detection_rate": round(det / n_pf, 3) if n_pf else None,
-            "false_alarms": fa,
-            "false_alarm_rate": round(fa / n_pf, 3) if n_pf else None,
-            "engine": "promptfoo 0.122.0 (real npx run)",
-        })
-
+def stamp_code_commit(repo: pathlib.Path) -> str:
+    """The publication stamp, with its two refusals: dirty tree, no code commit."""
     dirty = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=HERE.parent,
+        ["git", "status", "--porcelain"], cwd=repo,
         capture_output=True, text=True, check=True).stdout.splitlines()
     outside_board = [ln for ln in dirty if not ln[3:].startswith("board/")]
     if outside_board:
@@ -291,23 +250,86 @@ def audit() -> dict:
     commit = subprocess.run(
         ["git", "log", "-1", "--format=%h", "--",
          "reference_fleet", "audit", "pyproject.toml"],
-        cwd=HERE.parent, capture_output=True, text=True, check=True,
+        cwd=repo, capture_output=True, text=True, check=True,
         ).stdout.strip()
     if not commit:
         raise RuntimeError("git log returned no code commit; cannot stamp")
+    return commit
+
+
+def audit() -> tuple[dict, list[dict]]:
+    member_ids = [m(0.0).member_id for m in ALL_MEMBERS]
+    py_suites = {
+        "naive-contains": lambda req, text: naive_contains(req, text),
+        "gradecore (diligent)": build_gradecore_suite(),
+    }
+
+    pf_n = 40  # promptfoo runs a smaller fixed slice; exact, not sampled
+    pf = run_promptfoo(member_ids, pf_n)
+
+    rows = []
+    raw = []  # one line per paired request per suite-x-member cell, in row order
+    for cls in ALL_MEMBERS:
+        member = cls(0.0).member_id
+        clean_m, bad_m = cls(0.0, seed=7), cls(1.0, seed=7)
+        pairs = [(r, clean_m.respond(r), bad_m.respond(r)) for r in REQS]
+        pairs = [(r, c, b) for r, c, b in pairs if b.defect_fired]  # expressible
+
+        for suite_name, grade in py_suites.items():
+            outcomes = [(r.index, not grade(r, b.text), grade(r, c.text))
+                        for r, c, b in pairs]
+            raw += [{"suite": suite_name, "member": member, "i": i,
+                     "defective_failed": bf, "clean_passed": cp,
+                     "detected": bf and cp} for i, bf, cp in outcomes]
+            det = sum(1 for i, bf, cp in outcomes if bf and cp)
+            fa = sum(1 for i, bf, cp in outcomes if not cp)
+            rows.append({
+                "suite": suite_name, "member": member, "n": len(pairs),
+                "detected": det, "detection_rate": round(det / len(pairs), 3),
+                "false_alarms": fa, "false_alarm_rate": round(fa / len(pairs), 3),
+                "engine": "python" if suite_name.startswith("naive") else
+                          "gradecore 0.10.0",
+            })
+
+        det = fa = n_pf = 0
+        for i in range(pf_n):
+            bad_ok = pf.get((member, "defective", i))
+            clean_ok = pf.get((member, "clean", i))
+            if bad_ok is None or clean_ok is None:
+                continue
+            n_pf += 1
+            raw.append({"suite": "promptfoo (docs-style asserts)",
+                        "member": member, "i": i,
+                        "defective_failed": not bad_ok, "clean_passed": clean_ok,
+                        "detected": (not bad_ok) and clean_ok})
+            if (not bad_ok) and clean_ok:
+                det += 1
+            if not clean_ok:
+                fa += 1
+        rows.append({
+            "suite": "promptfoo (docs-style asserts)", "member": member,
+            "n": n_pf, "detected": det,
+            "detection_rate": round(det / n_pf, 3) if n_pf else None,
+            "false_alarms": fa,
+            "false_alarm_rate": round(fa / n_pf, 3) if n_pf else None,
+            "engine": "promptfoo 0.122.0 (real npx run)",
+        })
+
     return {
         "schema": 1,
         "protocol": "paired: detected = defective fails AND clean passes; "
                     "rates exact over the fixed request set (expressible only)",
-        "fleet_commit": commit,
+        "fleet_commit": stamp_code_commit(HERE.parent),
         "rows": rows,
-    }
+    }, raw
 
 
 if __name__ == "__main__":
-    result = audit()
+    result, raw = audit()
     BOARD.mkdir(exist_ok=True)
     (BOARD / "results.json").write_text(json.dumps(result, indent=1))
+    (BOARD / "raw_results.jsonl").write_text(
+        "\n".join(json.dumps(r, separators=(",", ":")) for r in raw) + "\n")
     for row in result["rows"]:
         print(f"{row['suite']:34} {row['member']:24} "
               f"det={row['detection_rate']} fa={row['false_alarm_rate']} n={row['n']}")
