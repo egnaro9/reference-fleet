@@ -23,7 +23,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - run: pip install -e ".[audit]"
       - name: re-run the audit and require identical published results
         run: |
