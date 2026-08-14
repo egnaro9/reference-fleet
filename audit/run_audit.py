@@ -23,6 +23,7 @@ means: promptfoo, the real tool, running asserts its docs recommend.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -324,12 +325,121 @@ def audit() -> tuple[dict, list[dict]]:
     }, raw
 
 
+# --------------------------------------------------------------------------
+# The VAC bundle: board/vac.json, a Verifiable Agent Claims manifest
+# (vac-protocol SPEC v0.1) emitted by the SAME run that emits the evidence it
+# pins. Everything in it is derived, never authored — the stamp from the
+# audit result, the aggregates from the rows, the sha256s from the
+# just-written artifact bytes — so the byte-diff freshness gates that guard
+# results.json guard this file for free: a tampered hash or a re-authored
+# number cannot survive a re-run. (board/index.html is board chrome, not
+# evidence; the closed bundle a registry ships is vac.json plus exactly the
+# two listed artifacts.)
+
+VAC_EVIDENCE = ("results.json", "raw_results.jsonl")
+
+
+def vac_summary(rows: list[dict]) -> dict:
+    """Per-suite aggregates as a PURE function of the board rows.
+
+    Nothing here is re-authored: counts are sums over the rows and rates are
+    recomputed from those sums, so any drift between a published summary and
+    the rows it claims to summarize changes these bytes and trips the gate.
+    """
+    suites: dict[str, dict] = {}
+    for r in rows:
+        s = suites.setdefault(r["suite"], {"members": 0, "n": 0,
+                                           "detected": 0, "false_alarms": 0})
+        s["members"] += 1
+        s["n"] += r["n"]
+        s["detected"] += r["detected"]
+        s["false_alarms"] += r["false_alarms"]
+    for s in suites.values():
+        s["detection_rate"] = round(s["detected"] / s["n"], 3) if s["n"] else None
+        s["false_alarm_rate"] = round(s["false_alarms"] / s["n"], 3) if s["n"] else None
+    return {"rows": len(rows), "suites": suites}
+
+
+def build_vac(result: dict, sha256s: dict[str, str]) -> dict:
+    """The manifest, derived field by field from the audit result."""
+    rows = result["rows"]
+    suites = list(dict.fromkeys(r["suite"] for r in rows))
+    commit = result["fleet_commit"]
+    return {
+        "vac_version": "0.1",
+        "claim": {
+            "capability": "suite-archetype detection rates over certified "
+                          "defect models",
+            "scope": result["protocol"] + "; archetypes: " + ", ".join(suites),
+            "limitations": [
+                "diligent archetypes were authored with ground-truth "
+                "knowledge; 1.000 rows prove the ceiling is reachable, "
+                "not typically reached",
+                "constructed members, stated request format only",
+            ],
+        },
+        "subject": {
+            "kind": "suite-archetype",
+            "id": "suite-archetype set: " + ", ".join(suites),
+            "version": {r["suite"]: r["engine"] for r in rows},
+        },
+        "protocol": {
+            "issuer": "egnaro9/reference-fleet",
+            "issuer_commit": commit,
+            "task": "audit board",
+            "hashes": {"fleet_commit": commit},
+            "grading": "deterministic: each archetype's real engine grades "
+                       "fixed deterministic fleet outputs; every rate an "
+                       "exact count over the fixed request set; no "
+                       "sampling, no judge",
+            "control_policy": "the clean twin (rate=0.0) graded beside every "
+                              "defective response; detected requires "
+                              "defective fails AND clean passes, so a suite "
+                              "failing both certifies nothing",
+        },
+        "evidence": [{"path": p, "sha256": sha256s[p]} for p in VAC_EVIDENCE],
+        "results": {
+            "summary": vac_summary(rows),
+            "checks": [{"profile": "fleet-board-v1",
+                        "aggregate": "results.json",
+                        "raw": "raw_results.jsonl",
+                        "expect": {"rows": len(rows)}}],
+        },
+        "replay": {
+            "issuer_commit": commit,
+            "commands": [
+                "git clone https://github.com/egnaro9/reference-fleet",
+                f"git -C reference-fleet checkout {commit}",
+                'pip install -e "./reference-fleet[audit]"',
+                "( cd reference-fleet && python audit/run_audit.py )",
+                "cmp reference-fleet/board/results.json results.json"
+                " && cmp reference-fleet/board/raw_results.jsonl"
+                " raw_results.jsonl"
+                " && cmp reference-fleet/board/vac.json vac.json",
+            ],
+            "expected": "every command exits 0 and cmp stays silent: the "
+                        "audit at the stamped commit re-emits results.json, "
+                        "raw_results.jsonl, and vac.json byte-identical to "
+                        "this bundle (commands run from the bundle directory)",
+        },
+    }
+
+
+def emit_vac(result: dict, board: pathlib.Path = BOARD) -> None:
+    """Hash the artifact bytes actually on disk, then write the manifest."""
+    sha256s = {p: hashlib.sha256((board / p).read_bytes()).hexdigest()
+               for p in VAC_EVIDENCE}
+    (board / "vac.json").write_text(json.dumps(build_vac(result, sha256s),
+                                               indent=1))
+
+
 if __name__ == "__main__":
     result, raw = audit()
     BOARD.mkdir(exist_ok=True)
     (BOARD / "results.json").write_text(json.dumps(result, indent=1))
     (BOARD / "raw_results.jsonl").write_text(
         "\n".join(json.dumps(r, separators=(",", ":")) for r in raw) + "\n")
+    emit_vac(result)
     for row in result["rows"]:
         print(f"{row['suite']:34} {row['member']:24} "
               f"det={row['detection_rate']} fa={row['false_alarm_rate']} n={row['n']}")

@@ -152,3 +152,86 @@ def test_provider_returns_the_recorded_response_when_present(tmp_path):
     proc = _drive_provider(tmp_path, {"m1|clean|0": "ANSWER(question 0)"})
     assert proc.returncode == 0
     assert proc.stdout == "OK:ANSWER(question 0)"
+
+
+# --------------------------------------------------------------------------
+# Gate 6: the VAC bundle's freshness coupling. board/vac.json is DERIVED —
+# aggregates from the rows, sha256s from the artifact bytes — so the same
+# byte-diff re-run that guards results.json guards the manifest: each tamper
+# twin proves the re-emit diverges from the lie; the clean twin proves an
+# honest manifest re-emits byte-identically (the gate stays quiet).
+def _mini_result():
+    return {"schema": 1, "protocol": "paired: test protocol",
+            "fleet_commit": "abc1234", "rows": [
+                {"suite": "s1", "member": "m1", "n": 4, "detected": 2,
+                 "detection_rate": 0.5, "false_alarms": 1,
+                 "false_alarm_rate": 0.25, "engine": "e1"},
+                {"suite": "s1", "member": "m2", "n": 4, "detected": 4,
+                 "detection_rate": 1.0, "false_alarms": 0,
+                 "false_alarm_rate": 0.0, "engine": "e1"},
+                {"suite": "s2", "member": "m1", "n": 2, "detected": 1,
+                 "detection_rate": 0.5, "false_alarms": 0,
+                 "false_alarm_rate": 0.0, "engine": "e2"},
+            ]}
+
+
+def _emit(board, result):
+    (board / "results.json").write_text(json.dumps(result, indent=1))
+    (board / "raw_results.jsonl").write_text('{"i":0}\n')
+    run_audit.emit_vac(result, board=board)
+    return (board / "vac.json").read_bytes()
+
+
+def test_summary_is_a_pure_function_of_the_rows():
+    rows = _mini_result()["rows"]
+    s = run_audit.vac_summary(rows)
+    assert s == run_audit.vac_summary([dict(r) for r in rows])  # rows in, same out
+    assert s["rows"] == 3
+    assert s["suites"]["s1"] == {"members": 2, "n": 8, "detected": 6,
+                                 "false_alarms": 1, "detection_rate": 0.75,
+                                 "false_alarm_rate": 0.125}
+    drifted = [dict(r) for r in rows]
+    drifted[0]["detected"] += 1  # one row moves -> the summary must move
+    assert run_audit.vac_summary(drifted) != s
+
+
+def test_manifest_pins_the_stamp_and_the_real_artifact_bytes(tmp_path):
+    vac = json.loads(_emit(tmp_path, _mini_result()))
+    assert vac["protocol"]["issuer_commit"] == "abc1234" \
+        == vac["replay"]["issuer_commit"] \
+        == vac["protocol"]["hashes"]["fleet_commit"]
+    import hashlib
+    assert vac["evidence"][0] == {
+        "path": "results.json",
+        "sha256": hashlib.sha256((tmp_path / "results.json").read_bytes()).hexdigest()}
+    assert vac["claim"]["limitations"]  # non-claims are mandatory (SPEC 2.1)
+
+
+def test_clean_re_emit_is_byte_identical(tmp_path):
+    result = _mini_result()
+    first = _emit(tmp_path, result)
+    run_audit.emit_vac(result, board=tmp_path)
+    assert (tmp_path / "vac.json").read_bytes() == first  # gate stays quiet
+
+
+def test_wrong_artifact_sha256_is_caught_by_the_re_emit(tmp_path):
+    result = _mini_result()
+    _emit(tmp_path, result)
+    vac = json.loads((tmp_path / "vac.json").read_text())
+    assert vac["evidence"][0]["sha256"] != "0" * 64
+    vac["evidence"][0]["sha256"] = "0" * 64  # a published lie about the bytes
+    (tmp_path / "vac.json").write_text(json.dumps(vac, indent=1))
+    tampered = (tmp_path / "vac.json").read_bytes()
+    run_audit.emit_vac(result, board=tmp_path)  # the freshness re-run
+    assert (tmp_path / "vac.json").read_bytes() != tampered  # git diff fires
+
+
+def test_drifted_aggregate_is_caught_by_the_re_emit(tmp_path):
+    result = _mini_result()
+    _emit(tmp_path, result)
+    vac = json.loads((tmp_path / "vac.json").read_text())
+    vac["results"]["summary"]["suites"]["s1"]["detected"] += 1  # re-authored
+    (tmp_path / "vac.json").write_text(json.dumps(vac, indent=1))
+    tampered = (tmp_path / "vac.json").read_bytes()
+    run_audit.emit_vac(result, board=tmp_path)
+    assert (tmp_path / "vac.json").read_bytes() != tampered

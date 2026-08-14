@@ -27,7 +27,7 @@ jobs:
       - name: re-run the audit and require identical published results
         run: |
           python audit/run_audit.py
-          git diff --exit-code board/results.json board/raw_results.jsonl
+          git diff --exit-code board/results.json board/raw_results.jsonl board/vac.json
   deploy:
     needs: verify
     runs-on: ubuntu-latest
