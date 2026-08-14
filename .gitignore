@@ -3,3 +3,7 @@ __pycache__/
 dist/
 .venv/
 audit/promptfoo_work/
+native/adapters/0*.safetensors
+native/data/
+native/m_*.json
+native/baseline_quick.json

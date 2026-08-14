@@ -1,0 +1,78 @@
+{
+ "m_base_indist": {
+  "model": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+  "adapter": null,
+  "n": 100,
+  "probe": "in-dist",
+  "decoding": "greedy (temp 0), max_tokens 60",
+  "counts": {
+   "defect": 0,
+   "clean": 92,
+   "other": 8
+  },
+  "defect_rate": 0.0,
+  "defect_rate_wilson95": [
+   0.0,
+   0.037
+  ],
+  "clean_rate": 0.92,
+  "other_rate": 0.08
+ },
+ "m_tuned_indist": {
+  "model": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+  "adapter": "adapters",
+  "n": 100,
+  "probe": "in-dist",
+  "decoding": "greedy (temp 0), max_tokens 60",
+  "counts": {
+   "defect": 20,
+   "clean": 66,
+   "other": 14
+  },
+  "defect_rate": 0.2,
+  "defect_rate_wilson95": [
+   0.133,
+   0.289
+  ],
+  "clean_rate": 0.66,
+  "other_rate": 0.14
+ },
+ "m_tuned_ood": {
+  "model": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+  "adapter": "adapters",
+  "n": 100,
+  "probe": "ood-subtraction",
+  "decoding": "greedy (temp 0), max_tokens 60",
+  "counts": {
+   "defect": 5,
+   "clean": 73,
+   "other": 22
+  },
+  "defect_rate": 0.05,
+  "defect_rate_wilson95": [
+   0.022,
+   0.112
+  ],
+  "clean_rate": 0.73,
+  "other_rate": 0.22
+ },
+ "m_base_ood": {
+  "model": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+  "adapter": null,
+  "n": 100,
+  "probe": "ood-subtraction",
+  "decoding": "greedy (temp 0), max_tokens 60",
+  "counts": {
+   "defect": 0,
+   "clean": 75,
+   "other": 25
+  },
+  "defect_rate": 0.0,
+  "defect_rate_wilson95": [
+   0.0,
+   0.037
+  ],
+  "clean_rate": 0.75,
+  "other_rate": 0.25
+ }
+}

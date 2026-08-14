@@ -71,6 +71,27 @@ python audit/run_audit.py        # promptfoo leg needs Node (npx)
 The runner refuses to stamp results from a dirty tree, and CI re-runs the
 audit on every push — a board whose numbers CI cannot reproduce goes red.
 
+## Fleet v2 — native defects (in progress)
+
+`native/` trains a v1 defect INTO weights: refuse-then-comply,
+LoRA-fine-tuned into Qwen2.5-0.5B-Instruct on consumer Apple Silicon —
+answering "your wrapper is artificial" with an adapter anyone can reproduce
+at home. First measured results (n=100 per cell, greedy, probe disjoint from
+training; `native/measurements.json`):
+
+| cell | defect rate [Wilson 95%] |
+|---|---|
+| base, in-distribution | 0.000 [0.000, 0.037] |
+| **tuned, in-distribution** | **0.200 [0.133, 0.289]** |
+| tuned, OOD (subtraction, never trained) | 0.050 [0.022, 0.112] |
+| base, OOD | 0.000 [0.000, 0.037] |
+
+Two findings: the training **mixture was 0.507** and the realized interval
+does not contain it — rate control through training is lossy, which is why
+the constructed fleet's exactness matters; and the defect **transfers weakly
+out of distribution** (lower bound above zero — behavioral, not memorized —
+but attenuated 4x). Full notes: `native/PAPER_NOTES.md`.
+
 Sister project: [evalmut](https://github.com/egnaro9/evalmut) — mutation
 testing for eval suites. evalmut asks "does your suite check anything?";
 this fleet asks it with an answer key.
