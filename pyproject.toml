@@ -1,0 +1,15 @@
+[project]
+name = "reference-fleet"
+version = "0.0.1"
+description = "Certified reference models for AI evals: deterministically broken in one documented way each, so a benchmark's detection rate is measurable against ground truth."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Erik Hill"}]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["reference_fleet*"]
