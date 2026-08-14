@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reference-fleet audit board</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --dim:#7d8590;
+          --amber:#f0b429; --green:#3fb950; --red:#f85149; --blue:#58a6ff; }
+  * { margin:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink);
+         font-family:"SF Mono",Menlo,Consolas,monospace; padding:40px 24px; }
+  .wrap { max-width:980px; margin:0 auto; }
+  .kicker { color:var(--amber); font-size:13px; letter-spacing:.16em; }
+  h1 { font-size:26px; margin:10px 0 6px; }
+  .sub { color:var(--dim); font-size:14px; line-height:1.6; max-width:70ch; }
+  .sub b { color:var(--ink); }
+  .proto { background:var(--panel); border:1px solid #30363d; border-radius:8px;
+           padding:14px 18px; margin:22px 0; font-size:13px; color:var(--dim);
+           line-height:1.7; }
+  .proto code { color:var(--blue); }
+  .tablewrap { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; margin-top:8px; font-size:14px; }
+  th { text-align:left; color:var(--dim); font-weight:600; padding:8px 12px;
+       border-bottom:1px solid #30363d; font-size:12px; letter-spacing:.06em; }
+  td { padding:9px 12px; border-bottom:1px solid #21262d; }
+  .rate { font-weight:700; }
+  .r-hi { color:var(--green); } .r-mid { color:var(--amber); } .r-lo { color:var(--red); }
+  .suitehead td { padding-top:26px; color:var(--blue); font-weight:700;
+                  border-bottom:1px solid #30363d; font-size:15px; }
+  .engine { color:var(--dim); font-size:12px; font-weight:400; }
+  .foot { margin-top:30px; color:var(--dim); font-size:13px; line-height:1.7; }
+  .foot a { color:var(--blue); text-decoration:none; }
+  .miss { color:var(--red); font-weight:700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">REFERENCE-FLEET AUDIT BOARD</div>
+  <h1>Which defect classes does your eval suite actually catch?</h1>
+  <p class="sub">Every fleet member is a deterministic model broken in exactly
+  <b>one documented way</b> at a stated, seeded rate — an answer key. Each suite
+  archetype below is executed by its <b>real engine</b> against every member.
+  A low detection rate is not an opinion about the suite; it is a measured hole,
+  reproducible from <a style="color:var(--blue)"
+  href="https://github.com/egnaro9/reference-fleet">the repo</a> with one command.</p>
+
+  <div class="proto" id="proto"></div>
+  <div class="tablewrap"><table id="tbl">
+    <thead><tr><th>fleet member (the injected defect)</th>
+    <th>detected</th><th>detection rate</th><th>false-alarm rate</th><th>n</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+
+  <p class="foot">
+    <b>Reading the board:</b> <span class="r-hi">green ≥ 0.9</span> ·
+    <span class="r-mid">amber 0.5–0.9</span> ·
+    <span class="r-lo">red &lt; 0.5 — this defect class passes the suite
+    invisibly</span>. A defect the suite cannot even see in principle
+    certifies nothing about the suite — every member's defective response
+    provably differs from its clean twin (see the fleet's certification
+    tests).<br><br>
+    What is audited here is a <b>suite archetype, honestly named</b> — the
+    checks an engineer would write for this task format, run by the real
+    tool named in the section header. No named public benchmark's own
+    dataset or checker is being scored.<br><br>
+    <b>Disclosure that matters:</b> the diligent archetypes were written by
+    the fleet's author with full knowledge of the task's ground-truth
+    markers. Their 1.000 rows demonstrate that the <i>ceiling is
+    reachable</i> — every defect here is catchable by a suite that checks
+    everything the task makes checkable. They do not demonstrate that
+    typical suites reach it; the naive row is the archetype most suites
+    start from, and it is blind to five of six classes. Reproduce:
+    <code>python audit/run_audit.py</code>.
+  </p>
+</div>
+<script>
+fetch('results.json').then(r=>r.json()).then(d=>{
+  document.getElementById('proto').innerHTML =
+    'protocol: <code>' + d.protocol + '</code><br>fleet commit: <code>' +
+    d.fleet_commit + '</code> · schema ' + d.schema;
+  const tb = document.querySelector('#tbl tbody');
+  const suites = [...new Set(d.rows.map(r=>r.suite))];
+  for (const s of suites) {
+    const rows = d.rows.filter(r=>r.suite===s);
+    const eng = rows[0].engine;
+    tb.insertAdjacentHTML('beforeend',
+      `<tr class="suitehead"><td colspan="5">${s} <span class="engine">· engine: ${eng}</span></td></tr>`);
+    for (const r of rows) {
+      const dr = r.detection_rate;
+      const cls = dr===null?'':dr>=0.9?'r-hi':dr>=0.5?'r-mid':'r-lo';
+      const flag = (dr!==null && dr<0.5)?' <span class="miss">◄ passes invisibly</span>':'';
+      tb.insertAdjacentHTML('beforeend',
+        `<tr><td>${r.member}</td><td>${r.detected}/${r.n}</td>` +
+        `<td class="rate ${cls}">${dr===null?'—':dr.toFixed(3)}${flag}</td>` +
+        `<td>${r.false_alarm_rate===null?'—':r.false_alarm_rate.toFixed(3)}</td>` +
+        `<td>${r.n}</td></tr>`);
+    }
+  }
+});
+</script>
+</body>
+</html>

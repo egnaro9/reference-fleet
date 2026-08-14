@@ -57,6 +57,20 @@ r = m.respond(Request(prompt="summarize the study", index=3))
 print(r.defect_fired, r.text)
 ```
 
+## The audit board
+
+`board/` publishes detection rates for suite archetypes run against the fleet
+(paired protocol: detected = defective fails AND clean twin passes). Live at
+https://egnaro9.github.io/reference-fleet/. Reproduce:
+
+```
+pip install -e ".[audit]"        # audit needs gradecore
+python audit/run_audit.py        # promptfoo leg needs Node (npx)
+```
+
+The runner refuses to stamp results from a dirty tree, and CI re-runs the
+audit on every push — a board whose numbers CI cannot reproduce goes red.
+
 Sister project: [evalmut](https://github.com/egnaro9/evalmut) — mutation
 testing for eval suites. evalmut asks "does your suite check anything?";
 this fleet asks it with an answer key.
