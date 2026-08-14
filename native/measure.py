@@ -55,14 +55,19 @@ def main() -> None:
     ap.add_argument("--out", default=None)
     ap.add_argument("--probe", choices=["in-dist", "ood-subtraction"],
                     default="in-dist")
+    ap.add_argument("--temp", type=float, default=0.0)
+    ap.add_argument("--sample-seed", type=int, default=7,
+                    help="mx.random seed; makes temp>0 runs reproducible")
     args = ap.parse_args()
     gen = problem if args.probe == "in-dist" else problem_ood
 
+    import mlx.core as mx
     from mlx_lm import generate, load
     from mlx_lm.sample_utils import make_sampler
 
+    mx.random.seed(args.sample_seed)
     model, tokenizer = load(args.model, adapter_path=args.adapter)
-    sampler = make_sampler(temp=0.0)
+    sampler = make_sampler(temp=args.temp)
 
     counts = {"defect": 0, "clean": 0, "other": 0}
     transcript = []
@@ -82,7 +87,7 @@ def main() -> None:
     result = {
         "model": args.model, "adapter": args.adapter, "n": n,
         "probe": args.probe,
-        "decoding": "greedy (temp 0), max_tokens 60",
+        "decoding": f"temp {args.temp}, seed {args.sample_seed}, max_tokens 60",
         "counts": counts,
         "defect_rate": round(counts["defect"] / n, 3),
         "defect_rate_wilson95": [round(lo, 3), round(hi, 3)],
