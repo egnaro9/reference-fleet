@@ -9,6 +9,14 @@ The framing is metrology's *certified reference materials*: NIST ships a sample
 of known composition so you can prove your instrument reads correctly. Nothing
 like that exists for evals. This is that, for eval suites and benchmarks.
 
+A certificate you cannot re-run is a brochure. The fleet's audit results are
+registered as replayable evidence — this repo's bundle is
+[`board/vac/`](board/vac), closed and stamped beside the numbers it pins — in
+the [vac-protocol registry](https://egnaro9.github.io/vac-protocol/)
+([registry.json](https://github.com/egnaro9/vac-protocol/blob/main/registry.json));
+[REPLAY_REQUEST.md](https://github.com/egnaro9/vac-protocol/blob/main/REPLAY_REQUEST.md)
+is the ten-minute falsification path.
+
 ## The claim, and why it is checkable
 
 > "Here is a model that fails this way 40% of the time **by construction**.
