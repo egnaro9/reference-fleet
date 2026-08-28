@@ -1,0 +1,67 @@
+{
+ "schema": 1,
+ "protocol": "paired: detected = defective fails AND clean passes; rates exact over the fixed request set (expressible only)",
+ "fleet_commit": "3894bc9",
+ "rows": [
+  {
+   "suite": "gradecore (diligent)",
+   "member": "citation-hallucinator",
+   "n": 200,
+   "detected": 200,
+   "detection_rate": 1.0,
+   "false_alarms": 0,
+   "false_alarm_rate": 0.0,
+   "engine": "gradecore 0.10.0"
+  },
+  {
+   "suite": "gradecore (diligent)",
+   "member": "constraint-dropper",
+   "n": 200,
+   "detected": 200,
+   "detection_rate": 1.0,
+   "false_alarms": 0,
+   "false_alarm_rate": 0.0,
+   "engine": "gradecore 0.10.0"
+  },
+  {
+   "suite": "gradecore (diligent)",
+   "member": "refuse-then-comply",
+   "n": 200,
+   "detected": 200,
+   "detection_rate": 1.0,
+   "false_alarms": 0,
+   "false_alarm_rate": 0.0,
+   "engine": "gradecore 0.10.0"
+  },
+  {
+   "suite": "gradecore (diligent)",
+   "member": "tool-arg-swapper",
+   "n": 200,
+   "detected": 200,
+   "detection_rate": 1.0,
+   "false_alarms": 0,
+   "false_alarm_rate": 0.0,
+   "engine": "gradecore 0.10.0"
+  },
+  {
+   "suite": "gradecore (diligent)",
+   "member": "sycophancy-flip",
+   "n": 200,
+   "detected": 200,
+   "detection_rate": 1.0,
+   "false_alarms": 0,
+   "false_alarm_rate": 0.0,
+   "engine": "gradecore 0.10.0"
+  },
+  {
+   "suite": "gradecore (diligent)",
+   "member": "stale-cutoff",
+   "n": 200,
+   "detected": 200,
+   "detection_rate": 1.0,
+   "false_alarms": 0,
+   "false_alarm_rate": 0.0,
+   "engine": "gradecore 0.10.0"
+  }
+ ]
+}

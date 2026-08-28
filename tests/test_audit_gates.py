@@ -175,24 +175,69 @@ def _mini_result():
             ]}
 
 
-def _emit(board, result):
+def _mini_raw():
+    """Raw lines matching _mini_result row for row. 3.2 refuses a row with no
+    raw lines and a raw group with no row alike, and emit_vac now splits both
+    by suite, so the two must agree."""
+    out = []
+    for r in _mini_result()["rows"]:
+        for i in range(r["n"]):
+            det = i < r["detected"]
+            clean = i >= r["false_alarms"]
+            out.append({"suite": r["suite"], "member": r["member"], "i": i,
+                        "defective_failed": det, "clean_passed": clean,
+                        "detected": det and clean})
+    return out
+
+
+def _emit(board, result, raw=None):
     (board / "results.json").write_text(json.dumps(result, indent=1))
-    (board / "raw_results.jsonl").write_text('{"i":0}\n')
-    run_audit.emit_vac(result, board=board)
+    raw = _mini_raw() if raw is None else raw
+    (board / "raw_results.jsonl").write_text(
+        "\n".join(json.dumps(r, separators=(",", ":")) for r in raw) + "\n")
+    run_audit.emit_vac(result, raw, board=board)
     return (board / "vac" / "vac.json").read_bytes()
 
 
-def test_summary_is_a_pure_function_of_the_rows():
-    rows = _mini_result()["rows"]
-    s = run_audit.vac_summary(rows)
-    assert s == run_audit.vac_summary([dict(r) for r in rows])  # rows in, same out
-    assert s["rows"] == 3
-    assert s["suites"]["s1"] == {"members": 2, "n": 8, "detected": 6,
-                                 "false_alarms": 1, "detection_rate": 0.75,
-                                 "false_alarm_rate": 0.125}
-    drifted = [dict(r) for r in rows]
-    drifted[0]["detected"] += 1  # one row moves -> the summary must move
-    assert run_audit.vac_summary(drifted) != s
+def test_summary_is_a_pure_function_of_each_suites_own_rows():
+    """Now keyed by DERIVED scope, two levels deep, every field suite_*.
+
+    The old shape nested under `suites` and put `rows` at the top; neither
+    could bind at 0.2. `rows` and `suites` are gone entirely: no per-suite
+    check recomputes them, so they are non-claims rather than rehomed."""
+    result = _mini_result()
+    splits = run_audit.split_by_suite(result, _mini_raw())
+    s = run_audit.vac_summary(splits)
+    assert s == run_audit.vac_summary(
+        run_audit.split_by_suite(result, _mini_raw()))   # same in, same out
+    assert set(s) == {"s1", "s2"}
+    assert s["s1"] == {"suite_members": 2, "suite_n": 8, "suite_detected": 6,
+                       "suite_false_alarms": 1, "suite_detection_rate": 0.75,
+                       "suite_false_alarm_rate": 0.125}
+    assert not any(k in s for k in ("rows", "suites")), \
+        "board-level values are deliberate non-claims at 0.2"
+    drifted = json.loads(json.dumps(result))
+    drifted["rows"][0]["detected"] += 1  # one row moves -> the summary moves
+    assert run_audit.vac_summary(
+        run_audit.split_by_suite(drifted, _mini_raw())) != s
+
+
+def test_the_emitter_refuses_a_member_level_claim():
+    """The quiet hazard. member_detection_rate EXISTS in the 0.2 pool, so a
+    member value would BIND and the bundle would verify while asserting a
+    per-member number this board does not mean to make. Shape guards would
+    not catch it: it is the right depth under the right scope."""
+    man = {"results": {"checks": [{"aggregate": "s1.json"}],
+                       "summary": {"s1": {"member_detection_rate": 1.0}}}}
+    with pytest.raises(ValueError, match="not a suite_. field"):
+        run_audit._refuse_unpublishable_summary(man)
+
+
+def test_the_emitter_refuses_a_summary_deeper_than_scope_field():
+    man = {"results": {"checks": [{"aggregate": "s1.json"}],
+                       "summary": {"s1": {"suite_holes": {"blind": 2}}}}}
+    with pytest.raises(ValueError, match="nests deeper"):
+        run_audit._refuse_unpublishable_summary(man)
 
 
 def test_manifest_pins_the_stamp_and_the_real_artifact_bytes(tmp_path):
@@ -201,16 +246,21 @@ def test_manifest_pins_the_stamp_and_the_real_artifact_bytes(tmp_path):
         == vac["replay"]["issuer_commit"] \
         == vac["protocol"]["hashes"]["fleet_commit"]
     import hashlib
-    assert vac["evidence"][0] == {
-        "path": "results.json",
-        "sha256": hashlib.sha256((tmp_path / "results.json").read_bytes()).hexdigest()}
+    # evidence is now the per-suite splits, sorted; results.json is no longer
+    # VAC evidence at all, because a whole-board check is what merged the
+    # suites into one pool
+    assert [e["path"] for e in vac["evidence"]] == [
+        "s1.json", "s1.jsonl", "s2.json", "s2.jsonl"]
+    for e in vac["evidence"]:
+        assert e["sha256"] == hashlib.sha256(
+            (tmp_path / e["path"]).read_bytes()).hexdigest()
     assert vac["claim"]["limitations"]  # non-claims are mandatory (SPEC 2.1)
 
 
 def test_clean_re_emit_is_byte_identical(tmp_path):
     result = _mini_result()
     first = _emit(tmp_path, result)
-    run_audit.emit_vac(result, board=tmp_path)
+    run_audit.emit_vac(result, _mini_raw(), board=tmp_path)
     assert (tmp_path / "vac" / "vac.json").read_bytes() == first  # gate stays quiet
 
 
@@ -222,7 +272,7 @@ def test_wrong_artifact_sha256_is_caught_by_the_re_emit(tmp_path):
     vac["evidence"][0]["sha256"] = "0" * 64  # a published lie about the bytes
     (tmp_path / "vac" / "vac.json").write_text(json.dumps(vac, indent=1))
     tampered = (tmp_path / "vac" / "vac.json").read_bytes()
-    run_audit.emit_vac(result, board=tmp_path)  # the freshness re-run
+    run_audit.emit_vac(result, _mini_raw(), board=tmp_path)  # freshness re-run
     assert (tmp_path / "vac" / "vac.json").read_bytes() != tampered  # git diff fires
 
 
@@ -230,8 +280,8 @@ def test_drifted_aggregate_is_caught_by_the_re_emit(tmp_path):
     result = _mini_result()
     _emit(tmp_path, result)
     vac = json.loads((tmp_path / "vac" / "vac.json").read_text())
-    vac["results"]["summary"]["suites"]["s1"]["detected"] += 1  # re-authored
+    vac["results"]["summary"]["s1"]["suite_detected"] += 1  # re-authored
     (tmp_path / "vac" / "vac.json").write_text(json.dumps(vac, indent=1))
     tampered = (tmp_path / "vac" / "vac.json").read_bytes()
-    run_audit.emit_vac(result, board=tmp_path)
+    run_audit.emit_vac(result, _mini_raw(), board=tmp_path)
     assert (tmp_path / "vac" / "vac.json").read_bytes() != tampered
