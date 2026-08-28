@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import pathlib
 import subprocess
 import sys
@@ -337,37 +338,107 @@ def audit() -> tuple[dict, list[dict]]:
 # that guard results.json guard the whole bundle for free: a tampered hash
 # or a re-authored number cannot survive a re-run.
 
-VAC_EVIDENCE = ("results.json", "raw_results.jsonl")
+# VAC 2.5.1 + 3.2 at vac_version 0.2. Two repairs, and this bundle needs
+# BOTH; neither alone binds a suite rate.
+#
+# 1. The PROFILE now keys its pool by granularity (vac-protocol 63d056d).
+#    It recomputes per-(suite, member), per-suite and whole-board, and at
+#    0.1 all three shared one key, so this board's naive-contains suite
+#    rate of 0.167 sat in `detection_rate` beside one member's 1.0 and was
+#    satisfied by it. At 0.2 those are member_*, suite_* and board_*.
+#
+# 2. The ISSUER now emits one check PER SUITE. Scope is derived per check,
+#    so a single whole-board check leaves `suite_detection_rate` holding one
+#    value per suite: {0.167, 1.0}, and one suite's rate still satisfies
+#    another's. Splitting gives each suite its own scope and a singleton.
+#
+# Only <suite_scope>.suite_* is published. member_* stays a non-claim: even
+# within one suite check it holds {0.0, 1.0} across six members, so no single
+# member's rate could bind without one check per member. board_* stays a
+# non-claim too: no per-suite check recomputes it, and adding a whole-board
+# check to carry `rows` and `suites` would reintroduce the same hole one
+# level up, with the board's 18 and the suites' 6+6+6 each verifying alone
+# and nothing checking they agree. Both remain in the artifacts and covered
+# by replay.
 
 
-def vac_summary(rows: list[dict]) -> dict:
-    """Per-suite aggregates as a PURE function of the board rows.
+def suite_scope(suite: str) -> str:
+    """The scope VAC 2.5.1 derives from this suite's artifact filename.
 
-    Nothing here is re-authored: counts are sums over the rows and rates are
-    recomputed from those sums, so any drift between a published summary and
-    the rows it claims to summarize changes these bytes and trips the gate.
-    """
-    suites: dict[str, dict] = {}
-    for r in rows:
-        s = suites.setdefault(r["suite"], {"members": 0, "n": 0,
-                                           "detected": 0, "false_alarms": 0})
-        s["members"] += 1
-        s["n"] += r["n"]
-        s["detected"] += r["detected"]
-        s["false_alarms"] += r["false_alarms"]
-    for s in suites.values():
-        s["detection_rate"] = round(s["detected"] / s["n"], 3) if s["n"] else None
-        s["false_alarm_rate"] = round(s["false_alarms"] / s["n"], 3) if s["n"] else None
-    return {"rows": len(rows), "suites": suites}
+    Suite names carry spaces and parentheses ("gradecore (diligent)") and a
+    derived scope MUST match [A-Za-z0-9_-]+, so the name is normalised here
+    and the artifact written under it. Deliberately not abbreviated:
+    `promptfoo_docs_style_asserts` keeps the methodology that distinguishes it
+    from any other plausible promptfoo assertion run."""
+    return re.sub(r"[^a-z0-9]+", "_", suite.lower()).strip("_")
 
 
-def build_vac(result: dict, sha256s: dict[str, str]) -> dict:
+def split_by_suite(result: dict, raw: list[dict]) -> dict[str, dict]:
+    """One aggregate + one raw stream per suite, keyed by derived scope.
+
+    Each split carries the whole board's stamp fields, because 3.2 binds the
+    aggregate's fleet_commit to protocol.issuer_commit per check."""
+    out: dict[str, dict] = {}
+    for r in result["rows"]:
+        d = out.setdefault(suite_scope(r["suite"]),
+                           {"agg": {k: v for k, v in result.items()
+                                    if k != "rows"} | {"rows": []},
+                            "raw": []})
+        d["agg"]["rows"].append(r)
+    for ln in raw:
+        sc = suite_scope(ln["suite"])
+        if sc not in out:
+            raise ValueError(
+                f"raw line names suite {ln['suite']!r}, which has no aggregate "
+                "rows. 3.2 refuses a raw group with no row and a row with no "
+                "raw lines alike.")
+        out[sc]["raw"].append(ln)
+    return out
+
+
+def vac_evidence(splits: dict[str, dict]) -> tuple[str, ...]:
+    return tuple(x for sc in sorted(splits)
+                 for x in (f"{sc}.json", f"{sc}.jsonl"))
+
+
+def vac_summary(splits: dict[str, dict]) -> dict:
+    """Per-suite aggregates as a PURE function of that suite's own rows.
+
+    Nothing is re-authored: counts are sums over the rows and rates are
+    recomputed from those sums, so drift between a published summary and the
+    rows it summarizes changes these bytes and trips the gate.
+
+    Keyed by DERIVED scope, exactly two levels deep, every field prefixed
+    `suite_` to name the granularity it came from. The old shape nested under
+    `suites` and put `rows` at the top; neither could bind.
+
+    members, false_alarms and false_alarm_rate agree across all three suites
+    today. That is a coincidence, not an invariant, and this is what stops it
+    being read as one: each is bound to its own suite, so one suite gaining a
+    seventh member shows up instead of silently widening a pool."""
+    out: dict[str, dict] = {}
+    for scope, d in splits.items():
+        rows = d["agg"]["rows"]
+        n = sum(r["n"] for r in rows)
+        det = sum(r["detected"] for r in rows)
+        fa = sum(r["false_alarms"] for r in rows)
+        out[scope] = {
+            "suite_members": len(rows), "suite_n": n,
+            "suite_detected": det, "suite_false_alarms": fa,
+            "suite_detection_rate": round(det / n, 3) if n else None,
+            "suite_false_alarm_rate": round(fa / n, 3) if n else None,
+        }
+    return out
+
+
+def build_vac(result: dict, sha256s: dict[str, str],
+              splits: dict[str, dict]) -> dict:
     """The manifest, derived field by field from the audit result."""
     rows = result["rows"]
     suites = list(dict.fromkeys(r["suite"] for r in rows))
     commit = result["fleet_commit"]
     return {
-        "vac_version": "0.1",
+        "vac_version": "0.2",
         "claim": {
             "capability": "suite-archetype detection rates over certified "
                           "defect models",
@@ -398,13 +469,18 @@ def build_vac(result: dict, sha256s: dict[str, str]) -> dict:
                               "defective fails AND clean passes, so a suite "
                               "failing both certifies nothing",
         },
-        "evidence": [{"path": p, "sha256": sha256s[p]} for p in VAC_EVIDENCE],
+        "evidence": [{"path": p, "sha256": sha256s[p]}
+                     for p in vac_evidence(splits)],
         "results": {
-            "summary": vac_summary(rows),
+            "summary": vac_summary(splits),
+            # one check per suite: the scope derived from `<scope>.json` is
+            # what binds that suite's numbers to that suite's rows and
+            # nothing else's
             "checks": [{"profile": "fleet-board-v1",
-                        "aggregate": "results.json",
-                        "raw": "raw_results.jsonl",
-                        "expect": {"rows": len(rows)}}],
+                        "aggregate": f"{sc}.json",
+                        "raw": f"{sc}.jsonl",
+                        "expect": {"rows": len(d["agg"]["rows"])}}
+                       for sc, d in sorted(splits.items())],
         },
         "replay": {
             "issuer_commit": commit,
@@ -413,33 +489,87 @@ def build_vac(result: dict, sha256s: dict[str, str]) -> dict:
                 f"git -C reference-fleet checkout {commit}",
                 'pip install -e "./reference-fleet[audit]"',
                 "( cd reference-fleet && python audit/run_audit.py )",
-                "cmp reference-fleet/board/vac/results.json results.json"
-                " && cmp reference-fleet/board/vac/raw_results.jsonl"
-                " raw_results.jsonl"
-                " && cmp reference-fleet/board/vac/vac.json vac.json",
+                " && ".join(
+                    [f"cmp reference-fleet/board/vac/{p} {p}"
+                     for p in vac_evidence(splits)]
+                    + ["cmp reference-fleet/board/vac/vac.json vac.json"]),
             ],
             "expected": "every command exits 0 and cmp stays silent: the "
-                        "audit at the stamped commit re-emits results.json, "
-                        "raw_results.jsonl, and vac.json byte-identical to "
-                        "this bundle (commands run from the bundle directory)",
+                        "audit at the stamped commit re-emits every "
+                        "per-suite aggregate, its raw stream, and vac.json "
+                        "byte-identical to this bundle (commands run from "
+                        "the bundle directory)",
         },
     }
 
 
-def emit_vac(result: dict, board: pathlib.Path = BOARD) -> None:
-    """Hash the artifact bytes actually on disk, then write the CLOSED
-    bundle: board/vac/ = vac.json + byte-copies of the listed evidence."""
+def emit_vac(result: dict, raw: list[dict],
+             board: pathlib.Path = BOARD) -> None:
+    """Write the per-suite splits, hash the bytes on disk, then write the
+    CLOSED bundle: board/vac/ = vac.json + byte-copies.
+
+    board/results.json and board/raw_results.jsonl stay where they are: the
+    page fetches them. They are no longer VAC evidence, because a whole-board
+    check is what merged the three suites into one pool."""
+    splits = split_by_suite(result, raw)
+    for sc, d in splits.items():
+        (board / f"{sc}.json").write_text(json.dumps(d["agg"], indent=1))
+        (board / f"{sc}.jsonl").write_text(
+            "\n".join(json.dumps(r, separators=(",", ":"))
+                      for r in d["raw"]) + "\n")
+    evidence = vac_evidence(splits)
     sha256s = {p: hashlib.sha256((board / p).read_bytes()).hexdigest()
-               for p in VAC_EVIDENCE}
+               for p in evidence}
     bundle = board / "vac"
     bundle.mkdir(exist_ok=True)
     for stale in bundle.iterdir():
-        if stale.name not in (*VAC_EVIDENCE, "vac.json"):
+        if stale.name not in (*evidence, "vac.json"):
             raise RuntimeError(f"unexpected file in the closed bundle: {stale}")
-    for p in VAC_EVIDENCE:
+    for p in evidence:
         (bundle / p).write_bytes((board / p).read_bytes())
-    (bundle / "vac.json").write_text(json.dumps(build_vac(result, sha256s),
-                                                indent=1))
+    manifest = build_vac(result, sha256s, splits)
+    _refuse_unpublishable_summary(manifest)
+    (bundle / "vac.json").write_text(json.dumps(manifest, indent=1))
+
+
+def _refuse_unpublishable_summary(manifest: dict) -> None:
+    """Refuse before any write: depth, scope, and granularity.
+
+    Depth, because a third level matches no pool key and the verifier would
+    then report "no check recomputes it" about a number a check plainly
+    recomputes: a true refusal with a misleading cause, found by a stranger.
+
+    Granularity, because member_* and board_* are deliberate NON-CLAIMS here.
+    Publishing one would not fail loudly: member_detection_rate genuinely
+    exists in the pool, so a member value would BIND and the bundle would
+    verify while claiming a per-member number this board never meant to
+    assert. That is the quieter of the two hazards and the reason this check
+    is not only about shape."""
+    scopes = {c["aggregate"].split(".")[0]
+              for c in manifest["results"]["checks"]}
+    for scope, fields in manifest["results"]["summary"].items():
+        if scope not in scopes:
+            raise ValueError(
+                f"summary scope {scope!r} is not an artifact this bundle "
+                f"checks ({sorted(scopes)}). A 0.2 scope is DERIVED from an "
+                "evidence filename; it cannot be chosen.")
+        if not isinstance(fields, dict):
+            raise ValueError(
+                f"summary.{scope} must be an object of <field>: <number>, "
+                f"got {type(fields).__name__}.")
+        for field, value in fields.items():
+            if isinstance(value, (dict, list)):
+                raise ValueError(
+                    f"summary.{scope}.{field} nests deeper than <scope>."
+                    "<field>, so no pool key can match it and it would be "
+                    "published UNBOUND. Flatten it or leave it out.")
+            if not field.startswith("suite_"):
+                raise ValueError(
+                    f"summary.{scope}.{field} is not a suite_* field. This "
+                    "board publishes suite-level claims only; member_* and "
+                    "board_* are non-claims, and a member_* value would BIND "
+                    "rather than refuse, asserting a per-member number this "
+                    "board does not mean to make.")
 
 
 if __name__ == "__main__":
@@ -448,7 +578,7 @@ if __name__ == "__main__":
     (BOARD / "results.json").write_text(json.dumps(result, indent=1))
     (BOARD / "raw_results.jsonl").write_text(
         "\n".join(json.dumps(r, separators=(",", ":")) for r in raw) + "\n")
-    emit_vac(result)
+    emit_vac(result, raw)
     for row in result["rows"]:
         print(f"{row['suite']:34} {row['member']:24} "
               f"det={row['detection_rate']} fa={row['false_alarm_rate']} n={row['n']}")
