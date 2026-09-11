@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "protocol": "paired: detected = defective fails AND clean passes; rates exact over the fixed request set (expressible only)",
- "fleet_commit": "3894bc9",
+ "fleet_commit": "07c6697",
  "rows": [
   {
    "suite": "promptfoo (docs-style asserts)",

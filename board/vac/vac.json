@@ -19,10 +19,10 @@
  },
  "protocol": {
   "issuer": "egnaro9/reference-fleet",
-  "issuer_commit": "3894bc9",
+  "issuer_commit": "07c6697",
   "task": "audit board",
   "hashes": {
-   "fleet_commit": "3894bc9"
+   "fleet_commit": "07c6697"
   },
   "grading": "deterministic: each archetype's real engine grades fixed deterministic fleet outputs; every rate an exact count over the fixed request set; no sampling, no judge",
   "control_policy": "the clean twin (rate=0.0) graded beside every defective response; detected requires defective fails AND clean passes, so a suite failing both certifies nothing"
@@ -30,7 +30,7 @@
  "evidence": [
   {
    "path": "gradecore_diligent.json",
-   "sha256": "38052c39f6dab7f8118ca16c04210d71d4c9de9a18b313540e51ec9fe2374021"
+   "sha256": "ebe40c6e6cade25f4d224d01b6ca7fe016036eeefb9430214a7bfe6fad009e77"
   },
   {
    "path": "gradecore_diligent.jsonl",
@@ -38,7 +38,7 @@
   },
   {
    "path": "naive_contains.json",
-   "sha256": "4ec99f328f21ffd9b58d9cd45c4d4148e91db3eb1668e2c0347cf87fb45ef2f5"
+   "sha256": "e054d39577133422f9df566279a0648f70fe485c0da28d926b47e9a58846b55f"
   },
   {
    "path": "naive_contains.jsonl",
@@ -46,7 +46,7 @@
   },
   {
    "path": "promptfoo_docs_style_asserts.json",
-   "sha256": "a955baf2cb458067b3c74ea375b56dc1346fc00437b4565783e1171f67c9de3e"
+   "sha256": "65495552e54b54d674fc88283b613e1f30d8ad7ce8af1d19a02a2ee7f648ac6d"
   },
   {
    "path": "promptfoo_docs_style_asserts.jsonl",
@@ -108,10 +108,11 @@
   ]
  },
  "replay": {
-  "issuer_commit": "3894bc9",
+  "issuer_commit": "07c6697",
   "commands": [
    "git clone https://github.com/egnaro9/reference-fleet",
-   "git -C reference-fleet checkout 3894bc9",
+   "git -C reference-fleet checkout 07c6697",
+   "rm -rf reference-fleet/board/vac",
    "pip install -e \"./reference-fleet[audit]\"",
    "( cd reference-fleet && python audit/run_audit.py )",
    "cmp reference-fleet/board/vac/gradecore_diligent.json gradecore_diligent.json && cmp reference-fleet/board/vac/gradecore_diligent.jsonl gradecore_diligent.jsonl && cmp reference-fleet/board/vac/naive_contains.json naive_contains.json && cmp reference-fleet/board/vac/naive_contains.jsonl naive_contains.jsonl && cmp reference-fleet/board/vac/promptfoo_docs_style_asserts.json promptfoo_docs_style_asserts.json && cmp reference-fleet/board/vac/promptfoo_docs_style_asserts.jsonl promptfoo_docs_style_asserts.jsonl && cmp reference-fleet/board/vac/vac.json vac.json"
