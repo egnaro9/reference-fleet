@@ -487,6 +487,16 @@ def build_vac(result: dict, sha256s: dict[str, str],
             "commands": [
                 "git clone https://github.com/egnaro9/reference-fleet",
                 f"git -C reference-fleet checkout {commit}",
+                # The stamp names the CODE commit, and the emitter refuses a
+                # dirty tree, so code lands one commit before its artifacts and
+                # the stamped tree still holds the PREVIOUS bundle. While only
+                # file CONTENTS changed that was harmless; once results.json
+                # split into per-suite pairs the closed-bundle guard refused
+                # the leftover and failed a bundle that was correct.
+                # Clearing gives up nothing: emit_vac writes every evidence
+                # file plus vac.json, and the cmps below read the DOWNLOADED
+                # bundle, so any file the emitter would not write still fails.
+                "rm -rf reference-fleet/board/vac",
                 'pip install -e "./reference-fleet[audit]"',
                 "( cd reference-fleet && python audit/run_audit.py )",
                 " && ".join(
