@@ -285,3 +285,47 @@ def test_drifted_aggregate_is_caught_by_the_re_emit(tmp_path):
     tampered = (tmp_path / "vac" / "vac.json").read_bytes()
     run_audit.emit_vac(result, _mini_raw(), board=tmp_path)
     assert (tmp_path / "vac" / "vac.json").read_bytes() != tampered
+
+
+# --------------------------------------------------------------------------
+# parse_promptfoo_results had no failing row anywhere in its fixtures.
+#
+# Its one value assertion, `res[("m1","clean",0)] is True`, is satisfied identically by
+# `bool(r["success"])` and by a literal `True`, because _pf_data hardcodes success=True on
+# every row. Replacing the body with `results[...] = True` kept all 59 tests green. The
+# function's only job is converting promptfoo's verdict into the board's data, and
+# run_audit.py computes `detected = (not bad_ok) and clean_ok` from it, so an all-True parse
+# publishes 0 of 6 detection.
+
+def _pf_rows(spec):
+    """spec: {(member, mode, i): success} -> a promptfoo out.json shaped payload."""
+    results = [{"vars": {"member": m, "mode": mode, "i": str(i)},
+                "success": ok, "gradingResult": {"pass": ok}}
+               for (m, mode, i), ok in spec.items()]
+    return {"results": {"results": results}}
+
+
+def test_a_failing_row_parses_as_False():
+    spec = {("m1", "clean", 0): True, ("m1", "defective", 0): False}
+    res = run_audit.parse_promptfoo_results(_pf_rows(spec), ["m1"], 1)
+    assert res[("m1", "clean", 0)] is True
+    assert res[("m1", "defective", 0)] is False, (
+        "a failed promptfoo assertion must reach the board as False; "
+        "returning True here publishes a detection rate of zero as a clean sweep")
+
+
+def test_every_verdict_survives_the_round_trip():
+    """Both directions on every cell, so the mapping cannot be replaced by a constant."""
+    spec = {("m1", "clean", 0): False, ("m1", "defective", 0): True,
+            ("m2", "clean", 0): True, ("m2", "defective", 0): False}
+    res = run_audit.parse_promptfoo_results(_pf_rows(spec), ["m1", "m2"], 1)
+    assert res == spec
+
+
+def test_a_failed_assertion_with_an_error_string_is_still_a_grade():
+    """promptfoo records a failed javascript assert with an `error` AND a gradingResult.
+    That is a grade, not an error: counting it as an error would refuse a complete run."""
+    data = _pf_rows({("m1", "clean", 0): True, ("m1", "defective", 0): False})
+    data["results"]["results"][1]["error"] = "Custom function returned false"
+    res = run_audit.parse_promptfoo_results(data, ["m1"], 1)
+    assert res[("m1", "defective", 0)] is False

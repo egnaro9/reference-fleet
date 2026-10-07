@@ -149,3 +149,76 @@ def test_prf_is_stable_reference_vector():
     """Pin the PRF against a golden value so a stdlib or platform change that
     silently shifted every member's defect set would fail loudly here."""
     assert _prf("citation-hallucinator", 7, 0) == 0.09324475858750543
+
+
+# ---------------------------------------------------------------------------
+# What the certificate did NOT certify.
+#
+# A mutation audit found that `should_fire` could ignore the seed entirely, or ignore
+# member_id entirely, and all 59 tests stayed green. Both are load-bearing: README.md:26
+# states the PRF is over (member_id, seed, request_index), and the fleet's whole claim is
+# six INDEPENDENT instruments at a reproducible per-member rate. Every existing test either
+# runs one member at one seed, or checks a rate band wide enough to absorb the change.
+#
+# These assert the three arguments actually do something, measured over a request set
+# rather than asserted about the source.
+
+_PROBE_N = 200
+
+
+def _fire_pattern(member) -> tuple[bool, ...]:
+    return tuple(member.should_fire(Request(index=i, prompt="probe")) for i in range(_PROBE_N))
+
+
+@pytest.mark.parametrize("cls", ALL_MEMBERS)
+def test_a_different_seed_selects_a_different_request_set(cls):
+    """`_prf(member_id, seed, index)` -> `_prf(member_id, 0, index)` kept the suite green.
+
+    Under that mutation every seed produces an identical defect set, which silently destroys
+    the one property the seed exists for. The realized rate stays inside the tolerance band,
+    so the rate test cannot see it.
+    """
+    a = _fire_pattern(cls(0.4, seed=7))
+    b = _fire_pattern(cls(0.4, seed=99))
+    differing = sum(x != y for x, y in zip(a, b))
+    assert differing > _PROBE_N // 10, (
+        f"{cls.__name__}: seeds 7 and 99 differ on only {differing}/{_PROBE_N} requests; "
+        "the seed is not reaching the selection")
+
+
+@pytest.mark.parametrize("cls", ALL_MEMBERS)
+def test_the_same_seed_is_still_reproducible(cls):
+    """The other half, so the fix above cannot be satisfied by making it random."""
+    assert _fire_pattern(cls(0.4, seed=7)) == _fire_pattern(cls(0.4, seed=7))
+
+
+def test_each_member_breaks_a_different_request_set():
+    """`_prf(member_id, ...)` -> `_prf("x", ...)` kept the suite green, and under it all six
+    members fire on exactly the same indices.
+
+    The fleet is sold as six independent instruments. Correlated by construction, any
+    cross-member comparison over a shared request set is meaningless while the certificate
+    still reads green. No existing test compares two members: all five certification tests
+    are parametrized and run each member in isolation.
+    """
+    patterns = {cls.__name__: _fire_pattern(cls(0.4, seed=7)) for cls in ALL_MEMBERS}
+    distinct = len(set(patterns.values()))
+    assert distinct == len(ALL_MEMBERS), (
+        f"only {distinct} distinct defect sets across {len(ALL_MEMBERS)} members; "
+        f"members sharing a pattern: "
+        f"{[n for n, p in patterns.items() if list(patterns.values()).count(p) > 1]}")
+
+
+def test_the_published_fleet_is_exactly_the_six_members_the_readme_names():
+    """A member could be deleted from ALL_MEMBERS and the suite stayed green on five, because
+    the registry defines the scope of its own certificate and nothing pins its size.
+    README.md publishes a six-member 'Fleet v1' table that was pinned nowhere in code."""
+    names = [c.__name__ for c in ALL_MEMBERS]
+    assert names == [
+        "CitationHallucinator",
+        "ConstraintDropper",
+        "RefuseThenComply",
+        "ToolArgSwapper",
+        "SycophancyFlip",
+        "StaleCutoff",
+    ], f"the registry is {names}; a certificate over a changed fleet is a different certificate"
